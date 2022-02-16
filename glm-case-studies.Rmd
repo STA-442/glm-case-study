@@ -1,0 +1,956 @@
+---
+title: "STA 442 - GLM case study - models for proportions"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+
+## Introduction
+
+For today's class, we are going to walk through a series of case studies to get a better understanding on how to apply and interpret GLM's to solve a variety of problems. We will explore any theory as needed. This .Rmd feel itself along with any data, can be found at the following [github repository]().
+
+
+
+## First Example: Binomial model for proportions
+
+We have looked in detail at the logistic regression model to model binary data (2 possible outcomes). Sometimes our data is collected in proportions instead of in individual rows of binary responses. 
+
+For example:
+
+- We may plot seeds in a plot of land and count how many seeds out of the total planted actually germinated. We will then repeat this process under different experimental controls. Our data will not be at the level of an individual seed, but at the level of a plot of land.
+
+- We might look at the proportion of insects that are killed under different amounts and types of pesticides. 
+
+- We might be interested in the proportion of rats that survive under different experimental controls.
+
+- The proportion of tadpoles that reach maturity in different sections of a pond. 
+
+In all these examples above, we collect data at the experimental control level instead of at the individual observation. 
+
+Our data then takes the following form
+
+```{r}
+
+tribble( ~experience_outcome, ~total_count, ~exposure_variable,
+         15, 30, 2.5,
+         24, 80, 0.1,
+         35, 100, 1.1,
+         20, 32, 5.8,
+         10, 91, .001) %>% 
+  head() %>% 
+  knitr::kable()
+
+
+```
+
+
+This this setting, each row contains  a count of total number of of exposed observations (total), of those total, how many experienced some binary outcome (experience_outcome), and then various input variables of interest (here just 1, exposure).
+
+The proportion 
+
+$$\frac{\text{experience_outcome}}{\text{total}}$$
+
+Is then our outcome of interest. 
+
+- 
+
+We can use the binomial GLM to model proportions as well. That is, the number of positive cases out of a total number of independent cases.  In R, we can specify a binomial GLM in one of 3 ways:
+
+1. The response can be the observed proportion $y_i$, when the sample sizes are given as weights to the `glm()`
+
+2. The response can be given as a two-column array, with the first column giving the successes, and the second column giving the failures.
+
+3. The response can be given as a binary vector, when we have one row for each observation (as we have seen already).
+
+Remember that the binomial model is given by:
+
+$$P(y; \mu, m) = \binom(m,my)\mu^{my}(1-\mu)^{m(1-y)}$$
+
+where $y = 0, 1/m, 2/m, \ldots, 1$ and the expected proportion is $0 < \mu < 1$. 
+
+
+
+### Turbines developing cracks
+
+We look at an experiment that was conducted to look at running wind turbines for various lengths of time and recording the proportion of turbine wheels $y_i$ our of $m_i$ turbines that developed a fissure (a small crack). 
+
+The data for this example is found in the data folder (data/turbine-fissures.csv). 
+
+```{r, warning=F, message=F}
+library(tidyverse)
+library(gt)
+
+turbine <- readr::read_csv('data/turbines-fissures.csv')
+
+turbine %>% 
+  gt() %>%
+  tab_header(
+    title = "Fissures in turbine wheels",
+    subtitle = "In an experiment, turbine wheels were run for a number of hours, and the number of fissures developed was counted"
+  )
+```
+
+This data frame has 11 observations and 3 variables:
+
+- `hours`: the number of hours the turbine was run
+- `turbines`: the number of turbines run for the given amount of hours
+- `fissures`: the number of turbines wheels with fissures
+
+
+Below we calculate the proportion of fissures for each row in the data and plot the relationship between hours of use and proportion of fissures
+
+
+```{r}
+
+turbine <- turbine %>% 
+  mutate(prop_fissure = fissures/turbines)
+
+turbine %>% 
+  ggplot(aes(hours, prop_fissure, label = row.names(.))) +
+  geom_point() +
+  geom_text(vjust = "top", nudge_y = -0.02) +
+  labs(x = "Hours of Use",
+       y = "Proportion of turbines with fissures") +
+  theme_bw()
+
+```
+
+
+We can specify this model in two ways:
+
+```{r}
+
+model_1 <- glm(fissures/turbines ~ hours, family = "binomial",
+               weights = turbines, data = turbine)
+
+model_2 <- glm(cbind(fissures, turbines - fissures) ~ hours, family = "binomial",
+               data = turbine)
+
+# are the coefficients the same?
+all.equal(coef(model_1), coef(model_2))
+
+# are the model deviances the same
+all.equal(summary(model_1)$deviance, summary(model_2)$deviance)
+
+# are the model AICs the same
+all.equal(summary(model_1)$aic, summary(model_2)$aic)
+
+```
+
+The data is presented in a summarized form for each row. If we wanted to conduct a logistic regression like we have done in the past, we would need all (sum(turbine\$turbines)) =  `r sum(turbine$turbines)` rows of data.
+
+
+In class we have discussed 3 link functions for a binomial GLM:
+
+1. the logit $$\eta=log\frac{\mu}{1-\mu} = logit(\mu)$$
+2. The probit link $\eta=\Phi^{-1}(\mu) = probit(\mu)$ where $\Phi(\cdot)$ is the cumulative density function for the normal distribution. 
+3. The complementary log-log link function $\eta= log(-log(1-\mu))$.
+
+
+The logit and probit links usually provide simular results, both functions are symmetric around .5. The choice usually comes down to taste. 
+
+
+Let's look at using all 3 of these models for this turbine data:
+
+
+```{r}
+model_logit <- glm(fissures/turbines ~ hours, data = turbine, family= binomial,
+                   weights = turbines)
+
+model_probit <- glm(fissures/turbines ~ hours, data = turbine, family= binomial(link=probit),
+                   weights = turbines)
+
+model_clog <- glm(fissures/turbines ~ hours, data = turbine, family= binomial(link=cloglog),
+                   weights = turbines)
+
+model_coefs <- broom::tidy(model_logit) %>% 
+  bind_rows(broom::tidy(model_probit)) %>% 
+  bind_rows(broom::tidy(model_clog)) %>% 
+  select(term, estimate) %>% 
+  mutate(model = rep(c("logit", "probit", "cloglog"), each = 2)) %>% 
+  pivot_wider(names_from = term, values_from = estimate) %>% 
+  mutate(`residual deviance` = c(deviance(model_logit),
+                                 deviance(model_probit), deviance(model_clog)))
+
+
+model_coefs %>% 
+  gt() %>%
+  tab_header(
+    title = "Model coefficients and deviance",
+    subtitle = "Using 3 different link functions for the binomial GLM (logit, probit, cloglog)"
+  )
+  
+```
+
+The logit and probit residual deviances are fairly similar, while the cloglog deviance is larger. All three models have different coefficients. Let's model the model fits.
+
+
+```{r, warning=F, message=F}
+turbine %>% 
+  ggplot(aes(x = hours, y = prop_fissure)) +
+  geom_point() + 
+  stat_smooth(aes(color="Logit"), method="glm", method.args=list(family="binomial"), se=F)+ 
+  stat_smooth(aes(color="Probit"), method="glm", method.args=list(family= binomial(link=probit)), se=F)+ 
+  stat_smooth(aes(color="cloglog"), method="glm", method.args=list(family= binomial(link=cloglog)), se=F) +
+  labs(color = "Link Type")
+```
+
+Here is another way to generate a simlar plot. Here we create a data.frame of new input values for hour (ranging from 1-5000) and then make predictions on the response scale. 
+
+```{r, warning=F, message=F}
+
+data.frame(hours = 1:5000) %>% 
+  mutate(logit_pred = predict(model_logit, type = "response", newdata = .),
+         probit_pred = predict(model_probit, type = "response", newdata = .),
+         clog_pred = predict(model_clog, type = "response", newdata = .)) %>% 
+  ggplot(aes(x = hours, y = logit_pred)) +
+  geom_line(aes(color = "Logit"))+
+  geom_line(aes(x = hours, y = probit_pred, color = "Probit"))+
+  geom_line(aes(x = hours, y = clog_pred, color = "cloglog"))+
+  labs(color = "Link Type")
+```
+
+All 3 models present similar results. 
+
+
+### Aside on the intuition behind the probit model
+
+We talked a bit about the probit distribution in class. Here we provide a little more intuition in how it relates to this turbine example.
+
+We can imagine that each wind turbine has some tolerance, whereby, once we cross that tolerance threshold we begin to see stress cracks (fissures) in the turbine. 
+
+We can also imagine that each turbine will have a slightly different tolerance due to the natural variation in their construction.  Let's say that for each turbine, $t_i$ is the tolerance for turbine $i$, and assumue that $t_i$ follows a normal distribution so that
+
+$$t_i \sim N(\tau_i, \sigma^2)$$
+$$\tau_i = \beta_o + \beta \text(hours)_i$$
+
+The probability that the $i^{th}$ turbine develops a fissure is then:
+
+$$ \mu_i = Pr(y_i = 1) = Pr(t_i < T) = \Phi\Big(\frac{T - t_i}{\sigma}\Big)$$
+
+Where T is some tolerance threshold. 
+
+
+We can also rewrite: $$\frac{T-\tau_i}{\sigma^2} = \frac{T - \beta_0' - \beta_1' hours}{sigma} = \beta_0 + \beta_1 hours$$
+
+Where $\beta_0 = (T-\beta_0')/\sigma$ and  $\beta_1 = -\beta_1'/\sigma$. We then write $$g(\mu_i) = \beta_0 + \beta_1 hours$$. 
+
+We call $g(\cdot)$ the probit link function. 
+
+
+### Odds ratios
+
+Remember from class that the binomial GLM can be written as $$log(odds) = \beta_0 + \beta_1 x$$ 
+
+or
+
+$$odds = exp(\beta_0) \times exp(\beta_1)^x$$
+
+As $x$ increases, the log odds increase by a linear amount of $\beta_1$. 
+
+The alternative interpretation is that if $x$ increases by 1 unit, the odds increase by a factor of exp(\beta_1).
+
+This interpretation is often why we use the logit link.
+
+
+```{r}
+
+broom::tidy(model_logit, conf.int = TRUE) %>% 
+  gt() %>% 
+  tab_header(
+    title = "Logistic Regression coefficients",
+    subtitle = "On the log odds scale"
+  )
+broom::tidy(model_logit, conf.int = TRUE, exponentiate=T) %>% 
+  gt() %>% 
+  tab_header(
+    title = "Logistic Regression coefficients",
+    subtitle = "On the log odds scale"
+  )
+```
+
+
+The interpretation here is that a 1 hour increase is associated with a 1.001 increase in the odds of a fissure. A more useful interpretation would be a 100 or 1000 hour increase. Let's rescale the data and fit that model:
+
+
+```{r}
+turbine <- turbine %>% 
+  mutate(hour100 = hours/100,
+         hour1000 = hours/1000)
+
+model_logit100 <- glm(fissures/turbines ~ hour100, data = turbine, family= binomial,
+                   weights = turbines)
+
+model_logit1000 <- glm(fissures/turbines ~ hour1000, data = turbine, family= binomial,
+                   weights = turbines)
+
+broom::tidy(model_logit100, conf.int = TRUE, exponentiate=T) %>% 
+  select(term, estimate, conf.low, conf.high) %>% 
+  gt() %>% 
+  tab_header(
+    title = "Odds Logistic Regression coefficients",
+    subtitle = "Hours scaled to per 100 hours"
+  )
+
+broom::tidy(model_logit1000, conf.int = TRUE, exponentiate=T) %>% 
+  select(term, estimate, conf.low, conf.high) %>% 
+  gt() %>% 
+  tab_header(
+    title = "Logistic Regression coefficients",
+    subtitle = "Hours scaled to per 1000 hours"
+  )
+
+
+```
+
+
+So, a 100 hour increase is associated with 1.11 times the odds of a fissure. A 1000 hour increase is associated with 2.72 times the odds of a fissure.
+
+
+Let's finish this example by looking at the linearity assumbption for the binomial model:
+
+
+```{r}
+
+turbine <- turbine %>% 
+  mutate(log_odds = predict(model_logit),
+         odds = exp(log_odds)) %>% 
+  mutate(empiracal_odds = (fissures + .5)/(turbines - fissures + .5),
+         log_empirical_odds = log(empiracal_odds))
+
+turbine %>% 
+  ggplot(aes(hours, log_empirical_odds)) +
+  geom_point() +
+  geom_line(aes(hours, log_odds)) +
+  labs(x = "Run time in hours",
+       y = "Log-odds")
+
+turbine %>% 
+  ggplot(aes(hours, empiracal_odds)) +
+  geom_point() +
+  geom_line(aes(hours, odds)) +
+  labs(x = "Run time in hours",
+       y = "Odds")
+
+```
+
+
+
+Remember that the odds are defined as $$\frac{\mu}{1-\mu}$$
+
+
+For example, if the probability of a fisure is .8, then the odds that a turbine develops a fissure is $.8/(1-.8) = 4$.
+
+Note the use of empirical log-odds, adding 0.5 to both the numerator and denominator of the odds, so that the log-odds can be computed even when y = 0.
+
+
+
+## Example 2: More odds ratios
+
+
+Here we look at some experimental data measuring  germination for two types of seeds and two types of root stocks. The data is available in the `/data` folder and is loaded below:
+
+
+```{r}
+
+germ <- readr::read_csv('data/germ.csv')
+
+germ %>% 
+  gt() %>% 
+  tab_header(
+    title = "Germination of seeds",
+    subtitle = "In an experiment, the number of seeds germination was recorded for two types of seeds and two types of root extracts"
+  )
+
+```
+
+The variables are described as follows:
+
+- `germ`: The number of seeds germinating
+- `total`: the number of seeds planted
+- `extract`: the extract type (Bean or Cucumber)
+- `seeds`: The type of seed; OA75 (O. aegyptiaca 75), or OA73 (O. aegyptiaca 73)
+
+We use this data to further illustrate odds ratios.
+
+
+Let's begin as usual with some descriptive statistics and plots
+
+```{r}
+germ <- germ %>% 
+  mutate(germ_prop = germ/total)
+
+p1 <- germ %>% 
+  ggplot(aes(germ_prop)) +
+  geom_histogram(aes(y=..density..), alpha=0.5, 
+                position="identity")+
+  geom_density(alpha=.2) +
+  labs("Proportion of seeds germinating")
+
+p2 <- germ %>% 
+  ggplot(aes(germ_prop, fill = extract)) +
+  geom_density(alpha=.2) +
+  labs("Proportion of seeds germinating",
+       subtitle = "By extract type",
+       x = "Proportion of Seeds that Germinate")
+p3 <- germ %>% 
+  ggplot(aes(germ_prop, fill = seeds)) +
+  geom_density(alpha=.2) +
+  labs("Proportion of seeds germinating",
+       subtitle = "By seed type",
+       x = "Proportion of Seeds that Germinate")
+
+
+p4 <- germ %>% 
+  ggplot(aes(extract, germ_prop)) +
+  geom_boxplot() +
+  labs("Proportion of seeds germinating",
+       subtitle = "By extract type",
+       x = "Proportion of Seeds that Germinate")
+
+p5 <- germ %>% 
+  ggplot(aes(seeds, germ_prop)) +
+  geom_boxplot() +
+  labs("Proportion of seeds germinating",
+       subtitle = "By seed type",
+       x = "Proportion of Seeds that Germinate")
+
+p1
+
+cowplot::plot_grid(p2, p3, p4, p5, nrow = 2)
+  
+
+
+
+
+```
+
+
+We will fit a model with both inputs as explanatory variables
+
+
+```{r}
+
+germ_model <- glm(germ/total ~ seeds + extract, family=binomial, data=germ, weights=total)
+
+broom::tidy(germ_model) %>% 
+  gt() %>% 
+  fmt_number(
+    columns = 2:5,
+    decimals = 4
+  ) %>% 
+  tab_header(
+    title = "Logistic regression coefficients",
+    subtitle = "Log-odds"
+  )
+
+broom::tidy(germ_model, exponentiate=T) %>% 
+  gt() %>% 
+  fmt_number(
+    columns = 2:5,
+    decimals = 4
+  ) %>% 
+  tab_header(
+    title = "Logistic regression coefficients",
+    subtitle = "Log-odds"
+  )
+```
+
+What can we say here:
+
+- The odds of seed germination occurring using seed OA75 is 1.311 times the odds of seed germination using seed OA73.
+- the odds of seed germinatino occurring using cucumber extract is 2.90 times the odds of seed germination occuring using bean extract. 
+
+
+### Overdispersion in the binomial model
+
+Recall that the variance in the binomial distribution is given by $$Var(y) = \mu(1-\mu)$$
+
+We often see the variance exceeding this value in practice. When this occurs, we call it **overdispersion**
+
+So what's the problem?
+
+For one thing, it means the standard errors will be underestimated, and smaller standard errors relative to the coefficient means we are more likely to reject the null hypothesis. Seeing more significant variables might lead us to build larger models than are necessary. 
+
+How do we detect overdispersion and how can we deal with it?
+
+The first thing we should do is conduct a goodness of fit test. Goodness-of-fit tests determine whether the current linear predictor already includes enough explanatory variables to fully describe the systematic trends in the data
+
+
+A goodness-of-fit test compares the model you are working with, (Model A ) with an alternative model (Model B). We call this model B the saturated model because it is the largest possible model which can  be fit to the data. This model has as many explanatory variables as data points, so that $p' = n$, and is known as the saturated model. Under the saturated model, all fitted values are the same as the data points ($\hat{\mu} = y_i$).
+
+
+The residual deviance for the saturated model is zero, so the likelihood ratio test statistic of the current model versus the saturated model turns out to be simply the residual deviance $D(y, \hat{\mu})$ of the current model
+
+If the residual deviance is greater than the residual degrees of freedom, then we have evidence of a lack of fit.
+
+What can cause this?
+
+Well, we could be missing many explanatory variables, but if all of the necessary variables are included (and we have checked for outliers), then overdispersion might be the culprit. 
+
+
+Continuing on with our example, seeds are often planted together in common plots, so that common causes of germination may interact. So we fit a full model below including the interction. We then  conduct a goodness of fit test for our current model using a pearson goodness of fit.
+
+
+```{r}
+germ_model_full <- glm( germ/total ~ extract + seeds + extract*seeds, family=binomial, 
+                        weights=total, data=germ )
+
+
+summary(germ_model_full)
+
+# goodness of fit test
+anova(germ_model_full, test="Chisq")
+
+df.residual(germ_model_full)
+c( deviance(germ_model_full), df.residual(germ_model_full) )
+
+
+# The pearson test statistic
+
+sum( resid(germ_model_full, type="pearson")^2 )
+
+# alternatively calculated by hand
+pearson_gof <- sum(germ_model_full$weights * germ_model_full$residuals^2)
+model_fit_stats <- data.frame(gof_statistic=c(germ_model_full$deviance, pearson_gof))
+model_fit_stats$DF <- rep(germ_model_full$df.residual, 2)
+model_fit_stats$P.Value <- pchisq(model_fit_stats$gof_statistic, df=model_fit_stats$DF, lower.tail=FALSE)
+row.names(model_fit_stats) <- c("Deviance", "Pearson"); print(model_fit_stats, digits=3)
+
+```
+
+
+The null hypothesis that the model is adequate is rejected. 
+
+The rule of thumb is that model fits reasonably well if The deviance is not significantly greater than $n-p$ where $n$ is the sample and $p$ is the number of covariates in the working model. 
+
+
+### The quasibinomial model 
+
+So, our model isn't the best fit to the data, and we think that we may have some overdispersion. There are typically two causes of overdispersion:
+
+1. The probabilities $\mu_i$ are not constant between observations, even when explanatory variables are unchanged. 
+2. The cases, $m_i$ from which $y_i$ is a proportion are not independent.
+
+We will deal with the first kind of overdispersion later with a hierarchical model.
+
+In the second case, assume that our cases $m_i$ that make up the cases for $y_i$ are correlated $\rho$. In this case our variance is given by
+
+$$ Var(y_i) = \phi\mu_i(1-\mu_i)/m_i$$
+
+Where $\phi= 1+ (m_i-1)\rho$
+
+
+This gives way to the quasibinomial model which has a variance function 
+
+$$v(\mu)= \mu(1-\mu)$$
+
+and allows for a dispersion parameter $\phi$ given by the pearson estimator above. 
+
+The important thing to note is that 
+
+The parameter estimates for binomial and quasi-binomial glms are identical (since the estimates $\hat{\beta_i}$ do not depend on $\phi$), but the standard errors are different.
+
+The effect of using the quasi-binomial model is to inflate the standard error of the parameter estimates by $\sqrt{\phi}$
+
+With this in mind, let's fit a quasi binomial model to the germination data
+
+
+```{r}
+model_quasi_bin <- glm( germ/total ~ extract + seeds + extract*seeds, family=quasibinomial, 
+                        weights=total, data=germ )
+
+anova(model_quasi_bin, test="F")
+```
+
+Note that F-tests are used for comparisons between quasi-binomial models. This follows because the dispersion φ is estimated (using the Pearson estimator by default). The quasi-binomial analysis of deviance suggests that only Extract is significant in the model, so germination frequency differs by root stock but not by seed type, unlike the binomial glm which showed a significant Extract by Seeds interaction.
+
+
+Let's look at how the standard errors differ between the models
+
+```{r}
+
+sqrt(summary(model_quasi_bin)$dispersion)
+
+beta <- coef(summary(germ_model_full))[,"Estimate"]
+binomial_se <- coef(summary(germ_model_full))[,"Std. Error"]
+quasi_binomial_se <- coef(summary(model_quasi_bin))[,"Std. Error"]
+data.frame(Estimate=beta, Binom.SE=binomial_se, Quasi.SE=quasi_binomial_se, Ratio=quasi_binomial_se/binomial_se)
+
+```
+
+
+## Example 3: Insectisides
+
+
+This data comes from an experiment where insects where exposed to various deposits of insecticides. The main outcome is the porportion of instects that were killed after 6 days of exposure. The data can be found in the data folder and is summarized below
+
+
+```{r}
+insects <- readr::read_csv('data/insects.csv')
+
+insects %>% 
+  gt() %>% 
+  tab_header(
+    title = "Insecticides",
+    subtitle = "The number of insects killed at various doses of insecticide"
+  )
+
+```
+
+Fifty insects were exposed to various deposits of insecticides. The proportions of the insects killed after six days exposure were recorded.
+
+
+Variables include:
+
+- `killed`: the number of insects killed at each poison leve
+- `number`: the number of insects exposed at each poison level
+- `insecticide`: the insecticide used (A, B or C)
+- `deposit`: the amount of deposit (insecticide) used in milligrams
+
+First let's make some plots of the data:
+
+
+```{r}
+
+# create the outcome
+
+insects <- insects %>% 
+  mutate(kill_prop = killed/number)
+
+
+
+insects %>% 
+  ggplot(aes(kill_prop)) +
+  geom_histogram(aes(y=..density..), alpha=0.5, 
+                position="identity", bins = 12)+
+  geom_density(alpha=.2) +
+  labs(title = "Proportion of insects killed")
+
+insects %>% 
+  ggplot(aes(deposit, kill_prop, color = insecticide)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Proportion of insects killed",
+       subtitle = "by the amount of deposit (mg) and insecticide",
+       x = "amount of deposit (mg)",
+       y = "Proportion of insects killed") +
+  theme_bw()
+
+
+
+```
+
+
+Insecticide C seems to have a larger proportion of dead insects, while A and B seem similar. A larger deposit looks like it is related to a larger proportion of kiled insects. 
+
+We will begin with an initial model with deposit and insecticide as inputs.
+
+
+```{r}
+insect_m1 <- glm(killed/number ~ deposit + insecticide    ,
+              family = binomial, weights = number, data = insects)
+summary(insect_m1)
+```
+
+
+We plot the fitted regression line through the data below:
+
+```{r}
+new_inputs <- expand.grid(deposit = seq( min(insects$deposit), 
+                                     max(insects$deposit), 
+                                     length=100),
+                          insecticide = c("A", "B", "C")) %>% 
+  mutate(predict_prob = predict(insect_m1, newdata = ., type = "response")) # log odds
+
+
+insects %>% 
+  ggplot(aes(deposit, kill_prop, color = insecticide)) +
+  geom_point() +
+  geom_line(data=new_inputs, 
+            aes(deposit, predict_prob, color = insecticide)) +
+  labs(title = "Proportion of insects killed",
+       subtitle = "by the amount of deposit (mg) and insecticide",
+       x = "amount of deposit (mg)",
+       y = "Proportion of insects killed") +
+  theme_bw()
+
+```
+
+
+### Quick aside on dose–response models.
+
+A common application of binomial GLMs is to quantify the relationship between some dosing variable (e.g. a poison, a drug) and some response variable (e.g. patient survival, insects killed). We are often trying to quantify a measure known as the median effective dose  (e.g. the dose of poison affecting 50% of the insects).
+
+For a binomial glm using a logit link function, $\eta = logit(\mu) = 0$  when
+$\mu = 0.5$. Writing the linear predictor as$\eta = \bea_0 +\beta_1 d$  where $d$ is the dose, then solving for the dose $d$ shows that
+
+$$\text{median effective dose} = -\frac{\hat{\beta_0}}{\hat{\beta_1}}$$
+
+More generally, the dose effective on any proportion $\rho$ of the population, 
+
+$$\frac{g(\rho) - \hat{\beta_0}}{\hat{\beta_1}}$$
+
+
+$g(\cdot)$ above is the link function. 
+
+
+We can use the `m.dose()` function from the `MASS` package to extract the median effective dose:
+
+
+```{r}
+# Pass location of intercept and slope
+MASS::dose.p(insect_m1, c(1, 2))
+
+```
+
+This provides the median effective dose for insecticide A. To get the median effective doses for the other insecticides, we need to refit this model without an intercept.
+
+```{r}
+# Pass location of intercept and slope
+insect_no_int <- glm(killed/number ~ deposit + insecticide -1,
+              family = binomial, weights = number, data = insects)
+summary(insect_no_int)
+```
+
+The median effective doses are now given by:
+
+
+```{r}
+
+median_effective_doses <- purrr::map_df(2:4, function(x) {
+  tibble(insecticide = LETTERS[x-1], 
+         median_effective_dose = MASS::dose.p(insect_no_int, c(x, 1))[1])
+})
+
+median_effective_doses %>% 
+  knitr::kable()
+```
+
+
+### Model diagnostics
+
+For the binomial regression model, we use quantile residuals. In GLM's we don't use usual residuals $y_i - \hat{\mu}$ (called response residuals). The reason is that in GLM's the variance is typically a function of the mean. 
+
+We usually handle the non-constant variance in these models by dividing out the effect of non-constant variance. 
+
+For example, Pearson residuals are given by:
+
+$$r_P = \frac{y - \hat{\mu}}{\sqrt{V(\hat{\mu})}}$$
+
+Where $V()$ is the variance function. For binomial regression, this is:
+
+$$r_P = \frac{y_i - \hat{\pi}}{\sqrt{\hat{\pi_i}(1-\hat{\pi_i})}}$$
+
+The sum of pearson residuals follows a chi sqared distribution.
+
+
+
+Pearson residuals are obtained in R via `resid(model_fit, type = "pearson")`.
+
+
+
+An alternative residual is based on the deviance or likelihood ratio chi-squared statistic. The deviance residual is given by:
+
+$$d_i = \sqrt{2[y_ilog(y_i/\pi_i) + (n_i - y_i)log(\frac{n_i-y_i}{n_i-\pi_i})]}$$
+
+This also takes the same sign as the residual $y_i-\pi_i$. Squaring these residuals and summing over all observations yields the deviance statistic. Observations with a deviance residual in excess of two may indicate lack of fit
+
+
+
+
+
+
+
+`
+
+
+
+
+
+
+```{r}
+library(statmod) # For qresid()
+
+insects %>% 
+  mutate(pearson_res = resid(insect_m1, type = "pearson"),
+         deviance_res = resid(insect_m1),
+         fitted_values = fitted(insect_m1)) %>% 
+  ggplot(aes(fitted_values, deviance_res, color =insecticide  )) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(x = "Fitted Values",
+       y = "Residuals")
+  
+insects %>% 
+  mutate(pearson_res = resid(insect_m1, type = "pearson"),
+         fitted_values = fitted(insect_m1),
+         deviance_res = resid(insect_m1),) %>% 
+  ggplot(aes(fitted_values, deviance_res, color =insecticide  )) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(x = "Fitted Values",
+       y = "Residuals") +
+  geom_line()
+
+```
+
+The proportions are under-estimated at the lower and upper ends. 
+
+The relationship between the log-odds and the porportions are also not linear as seen below
+
+```{r}
+
+insects %>% 
+  mutate(log_odds = kill_prop/(1-kill_prop))%>% 
+  ggplot(aes(deposit, log_odds, color = insecticide)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Relationship between deposit and log odds",
+       x = "amount of deposit (mg)",
+       y = "Log-odds") +
+  theme_bw()
+
+```
+
+
+Let's try a log transformation of the amount of deposit
+
+
+```{r}
+insects <- insects %>% 
+  mutate(log_deposit = log(deposit))
+
+insect_m2 <- glm(killed/number ~ log_deposit + insecticide    ,
+              family = binomial, weights = number, data = insects)
+summary(insect_m2)
+```
+
+
+This model seems to improve model fit. The AIC is much lower for this second model
+
+
+```{r}
+AIC(insect_m1)
+
+AIC(insect_m2)
+
+```
+
+Model diagnostics show that we have an improvement but still an underestimate of the proportions
+
+```{r}
+insects %>% 
+  mutate(odds = kill_prop/(1-kill_prop),
+         log_odds = log(odds)) %>% 
+  ggplot(aes(log_deposit, log_odds, color = insecticide)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Relationship between log(deposit) and log odds",
+       x = "amount of log(deposit (mg))",
+       y = "Log-odds") +
+  theme_bw()
+
+
+insects %>% 
+  mutate(q_res = qresid(insect_m2),
+         fitted_values = fitted(insect_m2)) %>% 
+  ggplot(aes(fitted_values, q_res, color =insecticide  )) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(x = "Fitted Values",
+       y = "Residuals")
+  
+insects %>% 
+  mutate(q_res = qresid(insect_m2),
+         fitted_values = fitted(insect_m2)) %>% 
+  ggplot(aes(fitted_values, q_res, color =insecticide  )) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(x = "Fitted Values",
+       y = "Residuals") +
+  geom_line()
+
+
+```
+
+
+We might want to try a polynomial relationship between log deposit and the proportions.
+
+
+```{r}
+
+insect_m3 <- glm(killed/number ~ poly(log_deposit, 2) + insecticide    ,
+              family = binomial, weights = number, data = insects)
+summary(insect_m3)
+```
+
+
+Let's compare model 2 and model 3
+
+
+```{r}
+anova( insect_m2, insect_m3, test="Chisq")
+
+```
+
+Model 3 provides improved fit. 
+
+```{r}
+new_inputs <- expand.grid(log_deposit = seq( min(insects$log_deposit), 
+                                     max(insects$log_deposit), 
+                                     length=100),
+                          insecticide = c("A", "B", "C")) %>% 
+  mutate(predict_prob = predict(insect_m3, newdata = ., type = "response"),
+         log_odds = predict(insect_m3, newdata = ., type = "link")) 
+
+
+insects %>% 
+  ggplot(aes(log_deposit, kill_prop, color = insecticide)) +
+  geom_point() +
+  geom_line(data=new_inputs, 
+            aes(log_deposit, predict_prob, color = insecticide)) +
+  labs(title = "Proportion of insects killed",
+       subtitle = "by log(deposit) and insecticide",
+       x = "amount of log(deposit (mg))",
+       y = "Proportion of insects killed") +
+  theme_bw()
+
+insects %>% 
+  mutate(q_res = qresid(insect_m3),
+         fitted_values = fitted(insect_m3)) %>% 
+  ggplot(aes(fitted_values, q_res, color =insecticide  )) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(x = "Fitted Values",
+       y = "Residuals")  +
+  coord_cartesian(ylim = c(-2,2))
+
+
+insects %>% 
+  mutate(odds = kill_prop/(1-kill_prop ),
+         log_odds = log(odds))%>% 
+  ggplot(aes(log_deposit, log_odds, color = insecticide)) +
+  geom_point() +
+  geom_line(data=new_inputs, 
+            aes(log_deposit, log_odds, color = insecticide)) +
+  labs(title = "Relationship between log(deposit) and log odds",
+       x = "amount of log(deposit (mg))",
+       y = "Log-odds") +
+  theme_bw() 
+
+
+
+```
+
+
+
+  
+  
